@@ -47,6 +47,36 @@ function isInternetExplorer() {
   return rv;
 }
 
+
+
+window.handleOpenURL = function(url) {
+  console.log("received url: " + url);
+  if (answered) { return; }
+
+    if ( url && !(url.indexOf(mobileCallbackURL + '#') === 0 ||
+                       url.indexOf(mobileCallbackURL + '?') === 0)) { return; }
+
+    var result = _auththis.parseHash(url.slice(mobileCallbackURL.length));
+
+    if (!result) {
+      _callback(new Error('Error parsing hash'), null, null, null, null);
+      answered = true;
+      return SafariViewController.hide();
+    }
+
+    if (result.id_token) {
+      _auththis.getProfile(result.id_token, function (err, profile) {
+        _callback(err, profile, result.id_token, result.access_token, result.state, result.refresh_token);
+      });
+      answered = true;
+      return SafariViewController.hide();
+    }
+
+    // Case where we've found an error
+    _callback(new Error(result.err || result.error || 'Something went wrong'), null, null, null, null);
+    answered = true;
+    return SafariViewController.hide();
+}
 /**
  * Stringify popup options object into
  * `window.open` string options format
@@ -159,7 +189,8 @@ function Auth0 (options) {
 }
 
 /**
- * Export version with `Auth0` constructor
+ * Export version with `Auth0` constru
+ ctor
  *
  * @property {String} version
  */
@@ -184,7 +215,9 @@ Auth0.clientInfo = { name: 'auth0.js', version: Auth0.version };
  * http://electron.atom.io/docs/v0.36.0/api/window-open/).
  */
 Auth0.prototype.openWindow = function(url, name, options) {
-  return window.open(url, name, stringifyPopupSettings(options));
+  var _this = this;
+  _auththis = this;
+  return this.openUrl(url, false,_this);
 }
 
 /**
@@ -785,8 +818,8 @@ Auth0.prototype.loginPhonegap = function (options, callback) {
     this._socialPhonegapLogin(options, callback);
     return;
   }
-
-  var mobileCallbackURL = joinUrl('https:', this._domain, '/mobile');
+  _callback = callback;
+  mobileCallbackURL = joinUrl(options.mobileDomain + ':', this._domain, '/mobile');
   var _this = this;
   var qs = [
     this._getMode(options),
@@ -812,17 +845,19 @@ Auth0.prototype.loginPhonegap = function (options, callback) {
   delete popupOptions.width;
   delete popupOptions.height;
 
-  var ref = this.openWindow(popupUrl, '_blank', popupOptions);
-  var answered = false;
+  var ref = SafariViewController;
+  this.openWindow(popupUrl, '_blank', popupOptions);
+  answered = false;
 
   function errorHandler(event) {
     if (answered) { return; }
     callback(new Error(event.message), null, null, null, null);
     answered = true;
-    return ref.close();
+    return this.dismissSafari();
   }
 
   function startHandler(event) {
+    console.log("START EVENT:",event);
     if (answered) { return; }
 
     if ( event.url && !(event.url.indexOf(mobileCallbackURL + '#') === 0 ||
@@ -833,7 +868,7 @@ Auth0.prototype.loginPhonegap = function (options, callback) {
     if (!result) {
       callback(new Error('Error parsing hash'), null, null, null, null);
       answered = true;
-      return ref.close();
+      return this.dismissSafari();
     }
 
     if (result.id_token) {
@@ -841,13 +876,13 @@ Auth0.prototype.loginPhonegap = function (options, callback) {
         callback(err, profile, result.id_token, result.access_token, result.state, result.refresh_token);
       });
       answered = true;
-      return ref.close();
+      return this.dismissSafari();
     }
 
     // Case where we've found an error
     callback(new Error(result.err || result.error || 'Something went wrong'), null, null, null, null);
     answered = true;
-    return ref.close();
+    return this.dismissSafari();
   }
 
   function exitHandler() {
@@ -1222,6 +1257,11 @@ Auth0.prototype.loginWithSocialAccessToken = function (options, callback) {
   });
 };
 
+
+
+
+
+
 /**
  * Open a popup, store the winref in the instance and return it.
  *
@@ -1233,6 +1273,45 @@ Auth0.prototype.loginWithSocialAccessToken = function (options, callback) {
  * @return {[type]}            [description]
  * @private
  */
+
+Auth0.prototype.openUrl = function(url, readerMode, _this) {
+  SafariViewController.isAvailable(function (available) {
+    if (available) {
+      SafariViewController.show({
+            url: url,
+            hidden: false, // default false. You can use this to load cookies etc in the background (see issue #1 for details).
+            animated: false, // default true, note that 'hide' will reuse this preference (the 'Done' button will always animate though)
+            transition: 'curl', // (this only works in iOS 9.1/9.2 and lower) unless animated is false you can choose from: curl, flip, fade, slide (default)
+            enterReaderModeIfAvailable: readerMode, // default false
+            tintColor: "#00ffff", // default is ios blue
+            barColor: "#0000ff", // on iOS 10+ you can change the background color as well
+            controlTintColor: "#ffffff" // on iOS 10+ you can override the default tintColor
+          },
+          // this success handler will be invoked for the lifecycle events 'opened', 'loaded' and 'closed'
+          function(result) {
+            if (result.event === 'opened') {
+              console.log('opened');
+            } else if (result.event === 'loaded') {
+              console.log('loaded');
+            } else if (result.event === 'closed') {
+              console.log('closed');
+            }
+          },
+          function(msg) {
+            console.log("KO: " + msg);
+          })
+    } else {
+      // potentially powered by InAppBrowser because that (currently) clobbers window.open
+      window.open(url, '_blank', 'location=yes');
+    }
+  })
+
+
+}
+
+Auth0.prototype.dismissSafari = function() {
+  SafariViewController.hide()
+}
 
 Auth0.prototype._buildPopupWindow = function (options, url) {
   if (this._current_popup && !this._current_popup.closed) {
@@ -1246,7 +1325,7 @@ Auth0.prototype._buildPopupWindow = function (options, url) {
   var opts = xtend(defaults, options.popupOptions || {});
   var popupOptions = stringifyPopupSettings(opts);
 
-  this._current_popup = window.open(url, 'auth0_signup_popup', popupOptions);
+  this._current_popup = this.openUrl(url, false, _this);
 
   if (!this._current_popup) {
     throw new Error('Popup window cannot not been created. Disable popup blocker or make sure to call Auth0 login or singup on an UI event.');
