@@ -1325,7 +1325,9 @@ Auth0.prototype._buildPopupWindow = function (options, url) {
   var opts = xtend(defaults, options.popupOptions || {});
   var popupOptions = stringifyPopupSettings(opts);
 
-  this._current_popup = this.openUrl(url, false, _this);
+  this._current_popup = SafariViewController
+
+  this.openUrl(url, false, _this);
 
   if (!this._current_popup) {
     throw new Error('Popup window cannot not been created. Disable popup blocker or make sure to call Auth0 login or singup on an UI event.');
